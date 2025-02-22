@@ -12,6 +12,7 @@ SPDX-License-Identifier: GPL-2.0-or-later
 #include <grp.h>
 #include <signal.h>
 #include <glob.h>
+#include <stdbool.h>
 
 enum service_status
 {
@@ -34,7 +35,7 @@ void clean_exit(int signum)
     }
 }
 
-int set_battery_charge_threshold(int8_t threshold)
+int set_battery_charge_threshold(int8_t threshold, bool persistent)
 {
     if (threshold < 50)
         return VALUE_TOO_SMALL;
@@ -42,17 +43,24 @@ int set_battery_charge_threshold(int8_t threshold)
         return VALUE_TOO_LARGE;
     FILE *control;
     glob_t matches;
+
+    // Use globbing to find battery charge threshold control path
     int status = glob(BAT_CTRL_GLOB, 0, NULL, &matches);
     switch (status)
     {
+    // Failure cases
     case GLOB_NOMATCH:
         fputs("No battery charge threshold control found\n", stderr);
     case GLOB_NOSPACE:
     case GLOB_ABORTED:
         return SYSTEM_FAILURE;
+
+    // Consider the first glob match to be the target battery
+    // Should be enough for most cases
     case 0:
         control = fopen(matches.gl_pathv[0], "w");
         globfree(&matches);
+
         if (control == NULL)
             return SYSTEM_FAILURE;
         int chars_written = fprintf(control, "%" PRId8, threshold);
@@ -62,24 +70,32 @@ int set_battery_charge_threshold(int8_t threshold)
             return SYSTEM_FAILURE;
         }
         fclose(control);
-        FILE *config = fopen(CONFIG_FILE, "w");
-        if (config == NULL)
+
+        // Save to configuration file
+        // If not persistent, just return success since we won't be here if the operation failed earlier
+        if (persistent)
         {
-            perror("Unable open configuration file");
-            return SYSTEM_FAILURE;
-        }
-        chars_written = fprintf(config, "%" PRId8, threshold);
-        if (chars_written <= 0)
-        {
-            perror("Failed to write configuration file");
-            fclose(config);
-            return SYSTEM_FAILURE;
+            FILE *config = fopen(CONFIG_FILE, "w");
+            if (config == NULL)
+            {
+                perror("Unable open configuration file");
+                return SYSTEM_FAILURE;
+            }
+            chars_written = fprintf(config, "%" PRId8, threshold);
+            if (chars_written <= 0)
+            {
+                perror("Failed to write configuration file");
+                fclose(config);
+                return SYSTEM_FAILURE;
+            }
+            else
+            {
+                fclose(config);
+                return SUCCESS;
+            }
         }
         else
-        {
-            fclose(config);
             return SUCCESS;
-        }
     }
 }
 
@@ -95,14 +111,15 @@ int restore_config()
     status = fscanf(config, "%d", &threshold);
     if (status == 1)
     {
-        status = set_battery_charge_threshold(threshold);
+        // No need to set persistent to true, the file is already there with the value
+        status = set_battery_charge_threshold(threshold, false);
         switch (status)
         {
         case VALUE_TOO_SMALL:
         case VALUE_TOO_LARGE:
             // Someone corrupted my config, fix it
             fputs("Configuration file seems broken, resetting...\n", stderr);
-            set_battery_charge_threshold(100);
+            set_battery_charge_threshold(100, true);
             return 1;
         case SYSTEM_FAILURE:
             exit(1);
@@ -160,11 +177,12 @@ int main(void)
     {
         int client_fd = accept(srv_fd, NULL, NULL);
         int8_t threshold;
-        if (read(client_fd, &threshold, 1) < 1)
+        bool persistent;
+        if (read(client_fd, &threshold, 1) < 1 && read(client_fd, &persistent, 1))
             close(client_fd);
         else
         {
-            int8_t status = set_battery_charge_threshold(threshold);
+            int8_t status = set_battery_charge_threshold(threshold, persistent);
             write(client_fd, &status, 1);
             close(client_fd);
         }

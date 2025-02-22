@@ -54,15 +54,19 @@ int main(int argc, char **argv)
 {
     char c;
     int8_t server_response;
-    bool set_threshold = false, get_threshold = false, wants_help = false;
+    bool set_threshold = false, get_threshold = false, wants_help = false, remove_till_boot = false;
     char *user_input;
-    while ((c = getopt(argc, argv, "s:gh")) != -1)
+    while ((c = getopt(argc, argv, "s:fgh")) != -1)
     {
         switch (c)
         {
         case 's':
             set_threshold = true;
             user_input = strdup(optarg);
+            break;
+        case 'f':
+            set_threshold = true;
+            remove_till_boot = true;
             break;
         case 'g':
             if (optarg != NULL)
@@ -86,25 +90,36 @@ int main(int argc, char **argv)
 
     if (set_threshold)
     {
-        if (user_input == NULL)
+        bool persist;
+        int threshold;
+        if (remove_till_boot)
         {
-            fputs("Expected a battery charge threshold. Example: batteryctl -s 80\n", stderr);
-            return 1;
+            persist = false;
+            threshold = 100;
         }
-        if (strlen(user_input) > 3)
+        else
         {
-            fputs("Please input up to 3 digits\n", stderr);
-            return 1;
-        }
-        int threshold = atoi(user_input);
-        if (threshold < 1 || threshold > 100)
-        {
-            fputs("Not a valid battery threshold\n", stderr);
-            return 1;
+            persist = false;
+            if (user_input == NULL)
+            {
+                fputs("Expected a battery charge threshold. Example: batteryctl -s 80\n", stderr);
+                return 1;
+            }
+            if (strlen(user_input) > 3)
+            {
+                fputs("Please input up to 3 digits\n", stderr);
+                return 1;
+            }
+            threshold = atoi(user_input);
+            if (threshold < 1 || threshold > 100)
+            {
+                fputs("Not a valid battery threshold\n", stderr);
+                return 1;
+            }
         }
         connect_to_service();
 
-        if (write(client_fd, &threshold, 1) < 1)
+        if (write(client_fd, &threshold, 1) < 1 || write(client_fd, &persist, 1) < 1)
         {
             fputs("Failed to write to the server socket!\n", stderr);
             return 1;
@@ -113,7 +128,10 @@ int main(int argc, char **argv)
         switch (server_response)
         {
         case SUCCESS:
-            printf("Battery charge threshold set to %d\n", threshold);
+            if (remove_till_boot)
+                puts("Battery charge threshold removed until next boot");
+            else
+                printf("Battery charge threshold set to %d\n", threshold);
             break;
         case VALUE_TOO_SMALL:
             fputs("Failed to set threshold: value too small, try value > 49\n", stderr);
@@ -136,6 +154,7 @@ int main(int argc, char **argv)
         puts("Available options:");
         puts("-s <value>   Set the battery charge threshold");
         puts("-g           Get the current charge threshold");
+        puts("-f           Remove the battery charge threshold until the next boot");
         puts("-h           Print this help prompt");
         return 0;
     }
