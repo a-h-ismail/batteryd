@@ -16,6 +16,12 @@ To check the current charge limit:
 batteryctl -g
 ```
 
+To temporarily remove the limit (until next system boot):
+
+```
+batteryctl -f
+```
+
 The service saves and restores the current battery charge threshold, providing persistence across reboots.
 
 ## Installation
