@@ -178,7 +178,7 @@ int main(void)
         int client_fd = accept(srv_fd, NULL, NULL);
         int8_t threshold;
         bool persistent;
-        if (read(client_fd, &threshold, 1) < 1 && read(client_fd, &persistent, 1))
+        if (read(client_fd, &threshold, 1) < 1 || read(client_fd, &persistent, 1) < 1)
             close(client_fd);
         else
         {
