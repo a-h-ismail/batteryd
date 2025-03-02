@@ -99,7 +99,7 @@ int main(int argc, char **argv)
         }
         else
         {
-            persist = false;
+            persist = true;
             if (user_input == NULL)
             {
                 fputs("Expected a battery charge threshold. Example: batteryctl -s 80\n", stderr);
