@@ -22,6 +22,11 @@ To temporarily remove the limit (until next system boot):
 batteryctl -f
 ```
 
+To reload current charge limit from the configuration file:
+```
+batteryctl -r
+```
+
 The service saves and restores the current battery charge threshold, providing persistence across reboots.
 
 ## Installation
