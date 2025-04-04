@@ -1,5 +1,5 @@
 /*
-Copyright (C) 2024 Ahmad Ismail
+Copyright (C) 2024-2025 Ahmad Ismail
 SPDX-License-Identifier: GPL-2.0-or-later
 */
 #include <stdio.h>
@@ -10,15 +10,9 @@ SPDX-License-Identifier: GPL-2.0-or-later
 #include <stdbool.h>
 #include <glob.h>
 
-#define BAT_CTRL_GLOB "/sys/class/power_supply/BAT?/charge_control_end_threshold"
+#include "common.h"
 
-enum service_status
-{
-    SUCCESS,
-    VALUE_TOO_SMALL,
-    VALUE_TOO_LARGE,
-    SYSTEM_FAILURE
-};
+#define BAT_CTRL_GLOB "/sys/class/power_supply/BAT?/charge_control_end_threshold"
 
 int client_fd;
 
@@ -53,10 +47,10 @@ void connect_to_service()
 int main(int argc, char **argv)
 {
     char c;
-    int8_t server_response;
-    bool set_threshold = false, get_threshold = false, wants_help = false, remove_till_boot = false;
+    int8_t operation, server_response;
+    bool set_threshold = false, get_threshold = false, wants_help = false, remove_till_boot = false, reload_cfg = false;
     char *user_input;
-    while ((c = getopt(argc, argv, "s:fgh")) != -1)
+    while ((c = getopt(argc, argv, "s:fghr")) != -1)
     {
         switch (c)
         {
@@ -76,13 +70,18 @@ int main(int argc, char **argv)
         case 'h':
             wants_help = true;
             break;
+        case 'r':
+            if (optarg != NULL)
+                fputs("Option -r doesn't expect an argument\n", stderr);
+            reload_cfg = true;
+            break;
         case '?':
             fputs("Incorrect usage, type \"batteryctl -h\" for help\n", stderr);
             return 1;
         }
     }
 
-    if (wants_help + get_threshold + set_threshold != 1)
+    if (wants_help + get_threshold + set_threshold + reload_cfg != 1)
     {
         fputs("Expected one option, type \"batteryctl -h\" for help\n", stderr);
         return 1;
@@ -92,13 +91,17 @@ int main(int argc, char **argv)
     {
         bool persist;
         int threshold;
+        operation = SET_THRESHOLD;
+
         if (remove_till_boot)
         {
+            // Requested by the -f option (fully charge until next reboot)
             persist = false;
             threshold = 100;
         }
         else
         {
+            // Regular update threshold operation
             persist = true;
             if (user_input == NULL)
             {
@@ -119,7 +122,7 @@ int main(int argc, char **argv)
         }
         connect_to_service();
 
-        if (write(client_fd, &threshold, 1) < 1 || write(client_fd, &persist, 1) < 1)
+        if (write(client_fd, &operation, 1) < 1 || write(client_fd, &threshold, 1) < 1 || write(client_fd, &persist, 1) < 1)
         {
             fputs("Failed to write to the server socket!\n", stderr);
             return 1;
@@ -131,7 +134,7 @@ int main(int argc, char **argv)
             if (remove_till_boot)
                 puts("Battery charge threshold removed until next boot");
             else
-                printf("Battery charge threshold set to %d\n", threshold);
+                printf("Battery charge threshold set to %d\%\n", threshold);
             break;
         case VALUE_TOO_SMALL:
             fputs("Failed to set threshold: value too small, try value > 49\n", stderr);
@@ -141,7 +144,7 @@ int main(int argc, char **argv)
             fputs("Failed to set threshold: value too large, try value <= 100\n", stderr);
             break;
         case SYSTEM_FAILURE:
-            fputs("Something went wrong with the service, check batteryd's logn\n", stderr);
+            fputs("Something went wrong with the service, check batteryd's logs\n", stderr);
             break;
         default:
             fputs("Unexpected response, please check batteryd service for malfunction.\n", stderr);
@@ -149,40 +152,51 @@ int main(int argc, char **argv)
         }
         return server_response;
     }
-    if (wants_help)
+    else if (wants_help)
     {
         puts("Available options:");
         puts("-s <value>   Set the battery charge threshold");
         puts("-g           Get the current charge threshold");
         puts("-f           Remove the battery charge threshold until the next boot");
+        puts("-r           Reload threshold from configuration file");
         puts("-h           Print this help prompt");
         return 0;
     }
-    if (get_threshold)
+    else if (get_threshold)
     {
-        FILE *control;
-        glob_t matches;
-        int status = glob(BAT_CTRL_GLOB, 0, NULL, &matches);
-        switch (status)
+        u_int8_t threshold;
+        operation = GET_THRESHOLD;
+        connect_to_service();
+        if (write(client_fd, &operation, 1) < 1)
         {
-        case GLOB_NOMATCH:
-            fputs("No battery charge threshold control found\n", stderr);
-        case GLOB_NOSPACE:
-        case GLOB_ABORTED:
+            fputs("Failed to write to the server socket!\n", stderr);
             return 1;
-        case 0:
-            control = fopen(matches.gl_pathv[0], "r");
-            globfree(&matches);
-            if (control == NULL)
-            {
-                perror("Failed to open battery threshold control file");
-                return 1;
-            }
-            int threshold;
-            fscanf(control, "%d", &threshold);
-            printf("Current charge threshold is %d\n", threshold);
-            return 0;
         }
+
+        if (read(client_fd, &threshold, 1) < 1)
+        {
+            fputs("Failed to get threshold!\n", stderr);
+            return 1;
+        }
+
+        printf("Current charge threshold is %d\%\n", threshold);
+
+        return 0;
     }
-    return 1;
+    else if (reload_cfg)
+    {
+        operation = RELOAD_CONFIG;
+        connect_to_service();
+        if (write(client_fd, &operation, 1) < 1)
+        {
+            return 1;
+        }
+        if (read(client_fd, &server_response, 1) < 1)
+        {
+            return 1;
+        }
+
+        printf("Reloaded battery threshold successfuly, now at %d\%\n", server_response);
+    }
+    return 0;
 }
