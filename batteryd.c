@@ -1,5 +1,5 @@
 /*
-Copyright (C) 2024 Ahmad Ismail
+Copyright (C) 2024-2025 Ahmad Ismail
 SPDX-License-Identifier: GPL-2.0-or-later
 */
 #include <stdio.h>
@@ -14,13 +14,7 @@ SPDX-License-Identifier: GPL-2.0-or-later
 #include <glob.h>
 #include <stdbool.h>
 
-enum service_status
-{
-    SUCCESS,
-    VALUE_TOO_SMALL,
-    VALUE_TOO_LARGE,
-    SYSTEM_FAILURE
-};
+#include "common.h"
 
 #define BAT_CTRL_GLOB "/sys/class/power_supply/BAT?/charge_control_end_threshold"
 #define CONFIG_FILE "/etc/batteryd.conf"
@@ -35,6 +29,27 @@ void clean_exit(int signum)
     }
 }
 
+char *get_battery_path()
+{
+    glob_t matches;
+    int status = glob(BAT_CTRL_GLOB, 0, NULL, &matches);
+    char *path = strdup(matches.gl_pathv[0]);
+    globfree(&matches);
+
+    switch (status)
+    {
+    case 0:
+        return path;
+
+    case GLOB_NOMATCH:
+        fputs("No battery charge threshold control found\n", stderr);
+    case GLOB_NOSPACE:
+    case GLOB_ABORTED:
+    default:
+        return NULL;
+    }
+}
+
 int set_battery_charge_threshold(int8_t threshold, bool persistent)
 {
     if (threshold < 50)
@@ -42,61 +57,68 @@ int set_battery_charge_threshold(int8_t threshold, bool persistent)
     else if (threshold > 100)
         return VALUE_TOO_LARGE;
     FILE *control;
-    glob_t matches;
+    char *path = get_battery_path();
 
-    // Use globbing to find battery charge threshold control path
-    int status = glob(BAT_CTRL_GLOB, 0, NULL, &matches);
-    switch (status)
-    {
-    // Failure cases
-    case GLOB_NOMATCH:
-        fputs("No battery charge threshold control found\n", stderr);
-    case GLOB_NOSPACE:
-    case GLOB_ABORTED:
+    if (path == NULL)
         return SYSTEM_FAILURE;
 
-    // Consider the first glob match to be the target battery
-    // Should be enough for most cases
-    case 0:
-        control = fopen(matches.gl_pathv[0], "w");
-        globfree(&matches);
+    control = fopen(path, "w");
+    free(path);
+    if (control == NULL)
+        return SYSTEM_FAILURE;
 
-        if (control == NULL)
-            return SYSTEM_FAILURE;
-        int chars_written = fprintf(control, "%" PRId8, threshold);
-        if (chars_written <= 0)
+    int chars_written = fprintf(control, "%" PRId8, threshold);
+    fclose(control);
+    if (chars_written <= 0)
+    {
+        perror("Failed to set threshold");
+        return SYSTEM_FAILURE;
+    }
+
+    // Save to configuration file
+    // If not persistent, just return success since we won't be here if the operation failed earlier
+    if (persistent)
+    {
+        FILE *config = fopen(CONFIG_FILE, "w");
+        if (config == NULL)
         {
-            perror("Failed to set threshold");
+            perror("Unable open configuration file");
             return SYSTEM_FAILURE;
         }
-        fclose(control);
-
-        // Save to configuration file
-        // If not persistent, just return success since we won't be here if the operation failed earlier
-        if (persistent)
+        chars_written = fprintf(config, "%" PRId8, threshold);
+        fclose(config);
+        if (chars_written <= 0)
         {
-            FILE *config = fopen(CONFIG_FILE, "w");
-            if (config == NULL)
-            {
-                perror("Unable open configuration file");
-                return SYSTEM_FAILURE;
-            }
-            chars_written = fprintf(config, "%" PRId8, threshold);
-            if (chars_written <= 0)
-            {
-                perror("Failed to write configuration file");
-                fclose(config);
-                return SYSTEM_FAILURE;
-            }
-            else
-            {
-                fclose(config);
-                return SUCCESS;
-            }
+            perror("Failed to write configuration file");
+            return SYSTEM_FAILURE;
         }
         else
             return SUCCESS;
     }
+    else
+        return SUCCESS;
+}
+
+int get_battery_threshold()
+{
+    FILE *control;
+    char *path = get_battery_path();
+
+    if (path == NULL)
+        return -1;
+
+    control = fopen(path, "r");
+    free(path);
+    if (control == NULL)
+    {
+        perror("Failed to open battery threshold control file");
+        return -1;
+    }
+    int threshold;
+    fscanf(control, "%d", &threshold);
+    fclose(control);
+
+    return threshold;
 }
 
 int restore_config()
@@ -109,6 +131,7 @@ int restore_config()
     }
     int threshold, status;
     status = fscanf(config, "%d", &threshold);
+    fclose(config);
     if (status == 1)
     {
         // No need to set persistent to true, the file is already there with the value
@@ -147,6 +170,12 @@ int main(void)
 
     srv_fd = socket(AF_UNIX, SOCK_STREAM, 0);
 
+    if (srv_fd == -1)
+    {
+        perror("Failed to create server socket");
+        return 1;
+    }
+
     // Get the GID of the batteryd group to allow access of group members to socket
     struct group *grp;
     grp = getgrnam("batteryd");
@@ -176,18 +205,36 @@ int main(void)
     while (1)
     {
         int client_fd = accept(srv_fd, NULL, NULL);
+        int8_t opcode;
         int8_t threshold;
         bool persistent;
-        if (read(client_fd, &threshold, 1) < 1 || read(client_fd, &persistent, 1) < 1)
-            close(client_fd);
-        else
+
+        // Read the operation requested by the user, check at the same time that the client didn't die unexpectedly
+        if (read(client_fd, &opcode, 1) == 1)
         {
-            int8_t status = set_battery_charge_threshold(threshold, persistent);
-            write(client_fd, &status, 1);
-            close(client_fd);
+            switch (opcode)
+            {
+            case SET_THRESHOLD:
+                if (!(read(client_fd, &threshold, 1) < 1 || read(client_fd, &persistent, 1) < 1))
+                {
+                    int8_t status = set_battery_charge_threshold(threshold, persistent);
+                    write(client_fd, &status, 1);
+                    // Rate limiting to prevent a faulty user space process from thrashing the battery controller
+                    sleep(2);
+                }
+                break;
+            case GET_THRESHOLD:
+                threshold = get_battery_threshold();
+                if (send(client_fd, &threshold, 1, MSG_NOSIGNAL) < 1)
+                    perror("Failed to reply to client");
+                break;
+            case RELOAD_CONFIG:
+                restore_config();
+                threshold = get_battery_threshold();
+                if (send(client_fd, &threshold, 1, MSG_NOSIGNAL) < 1)
+                    perror("Failed to reply to client");
+            }
         }
-        // Rate limiting to avoid a faulty user space process from thrashing the battery controller
-        sleep(2);
     }
     return 0;
 }
