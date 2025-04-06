@@ -140,8 +140,7 @@ int restore_config()
         {
         case VALUE_TOO_SMALL:
         case VALUE_TOO_LARGE:
-            // Someone corrupted my config, fix it
-            fputs("Configuration file seems broken, resetting...\n", stderr);
+            fputs("Incorrect values in configuration file, resetting...\n", stderr);
             set_battery_charge_threshold(100, true);
             return 1;
         case SYSTEM_FAILURE:
@@ -150,6 +149,13 @@ int restore_config()
             printf("Set battery charge threshold to %d (from configuration)\n", threshold);
             return 0;
         }
+    }
+    else
+    {
+        // Someone corrupted my config, fix it
+        fputs("Configuration file is apparently broken, resetting...\n", stderr);
+        set_battery_charge_threshold(100, true);
+        return 2;
     }
 }
 
