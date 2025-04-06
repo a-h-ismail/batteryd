@@ -4,6 +4,20 @@ Description=Battery charge threshold management service
 [Service]
 Type=simple
 ExecStart=/usr/local/bin/batteryd
+TasksMax=1
+MemoryMax=5M
+ProtectHome=true
+PrivateDevices=true
+ProtectClock=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+PrivateNetwork=true
+IPAddressDeny=any
 
 [Install]
 WantedBy=multi-user.target
