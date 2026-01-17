@@ -6,9 +6,14 @@ This project provides easy control and persistence of battery charge limiters in
 
 ## Usage
 
-To set battery charge limit to 80% (if your device supports it):
+To set battery charge limit to 80% (persists across reboots):
 ```
 batteryctl -s 80
+```
+
+To set battery charge limit to 80% without persistence:
+```
+batteryctl -t -s 80
 ```
 
 To check the current charge limit:
@@ -17,7 +22,6 @@ batteryctl -g
 ```
 
 To temporarily remove the limit (until next system boot):
-
 ```
 batteryctl -f
 ```
