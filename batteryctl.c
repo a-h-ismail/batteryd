@@ -16,6 +16,7 @@ SPDX-License-Identifier: GPL-2.0-or-later
 
 int client_fd;
 
+// Connects to the batteryd socket and places the file descriptor in the global client_fd
 void connect_to_service()
 {
     struct sockaddr_un srv_socket;
@@ -48,15 +49,19 @@ int main(int argc, char **argv)
 {
     char c;
     int8_t operation, server_response;
-    bool set_threshold = false, get_threshold = false, wants_help = false, remove_till_boot = false, reload_cfg = false;
+    bool set_threshold = false, persist = true, get_threshold = false, wants_help = false, remove_till_boot = false,
+         reload_cfg = false;
     char *user_input;
-    while ((c = getopt(argc, argv, "s:fghr")) != -1)
+    while ((c = getopt(argc, argv, "s:tfghr")) != -1)
     {
         switch (c)
         {
         case 's':
             set_threshold = true;
             user_input = strdup(optarg);
+            break;
+        case 't':
+            persist = false;
             break;
         case 'f':
             set_threshold = true;
@@ -89,7 +94,6 @@ int main(int argc, char **argv)
 
     if (set_threshold)
     {
-        bool persist;
         int threshold;
         operation = SET_THRESHOLD;
 
@@ -101,8 +105,7 @@ int main(int argc, char **argv)
         }
         else
         {
-            // Regular update threshold operation
-            persist = true;
+            // Regular "update threshold" operation
             if (user_input == NULL)
             {
                 fputs("Expected a battery charge threshold. Example: batteryctl -s 80\n", stderr);
@@ -132,9 +135,11 @@ int main(int argc, char **argv)
         {
         case SUCCESS:
             if (remove_till_boot)
-                puts("Battery charge threshold removed until next boot");
+                puts("Battery charge threshold removed until next restart");
+            else if (persist)
+                printf("Battery charge threshold set to %d%%\n", threshold);
             else
-                printf("Battery charge threshold set to %d\%\n", threshold);
+                printf("Battery charge threshold set to %d%% until next restart\n", threshold);
             break;
         case VALUE_TOO_SMALL:
             fputs("Failed to set threshold: value too small, try value > 49\n", stderr);
@@ -156,6 +161,7 @@ int main(int argc, char **argv)
     {
         puts("Available options:");
         puts("-s <value>   Set the battery charge threshold");
+        puts("-t           Used alongside -s to make the change temporary");
         puts("-g           Get the current charge threshold");
         puts("-f           Remove the battery charge threshold until the next boot");
         puts("-r           Reload threshold from configuration file");
@@ -179,7 +185,7 @@ int main(int argc, char **argv)
             return 1;
         }
 
-        printf("Current charge threshold is %d\%\n", threshold);
+        printf("Current charge threshold is %d%%\n", threshold);
 
         return 0;
     }
@@ -196,7 +202,7 @@ int main(int argc, char **argv)
             return 1;
         }
 
-        printf("Reloaded battery threshold successfuly, now at %d\%\n", server_response);
+        printf("Reloaded battery threshold successfuly, now at %d%%\n", server_response);
     }
     return 0;
 }
