@@ -33,21 +33,27 @@ char *get_battery_path()
 {
     glob_t matches;
     int status = glob(BAT_CTRL_GLOB, 0, NULL, &matches);
-    char *path = strdup(matches.gl_pathv[0]);
-    globfree(&matches);
+    char *path;
 
     switch (status)
     {
-    case 0:
+    case EXIT_SUCCESS:
+        path = strdup(matches.gl_pathv[0]);
+        globfree(&matches);
         return path;
 
     case GLOB_NOMATCH:
-        fputs("No battery charge threshold control found\n", stderr);
+        fputs("No battery charge threshold control found...\n", stderr);
+        break;
     case GLOB_NOSPACE:
+        fputs("No memory left to perform glob expansion to find the battery control file!\n", stderr);
+        break;
     case GLOB_ABORTED:
-    default:
-        return NULL;
+        fputs("Read error while finding battery control file!\n", stderr);
+        break;
     }
+    globfree(&matches);
+    return NULL;
 }
 
 int set_battery_charge_threshold(int8_t threshold, bool persistent)
