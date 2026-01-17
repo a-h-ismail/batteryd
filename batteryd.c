@@ -240,11 +240,14 @@ int main(void)
                 if (send(client_fd, &threshold, 1, MSG_NOSIGNAL) < 1)
                     perror("Failed to reply to client");
                 break;
-            case RELOAD_CONFIG:
+            case RELOAD_CONFIG: {
                 restore_config();
                 threshold = get_battery_threshold();
                 if (send(client_fd, &threshold, 1, MSG_NOSIGNAL) < 1)
                     perror("Failed to reply to client");
+                sleep(2);
+                break;
+            }
             }
         }
     }
