@@ -121,7 +121,11 @@ int get_battery_threshold()
         return -1;
     }
     int threshold;
-    fscanf(control, "%d", &threshold);
+    if (fscanf(control, "%d", &threshold) != 1)
+    {
+        fputs("Failed to get battery threshold from control file!\n", stderr);
+        threshold = -1;
+    }
     fclose(control);
 
     return threshold;
